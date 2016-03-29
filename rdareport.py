@@ -1,20 +1,20 @@
 import logging
 from   report     import Report
 from   report     import ParseUeIds
-from   rdafile    import RdaFile
+from   csvfile    import CsvFile
 
 rdafiles = \
   { \
-    0:'160323_151426_NJRCSIT148_D500logs_NA_0001_600.csv', \
-    1:'160323_151426_NJRCSIT148_D500logs_NA_0001_601.csv', \
-    2:'160323_151426_NJRCSIT148_D500logs_NA_0001_602.csv', \
-    3:'160323_151426_NJRCSIT148_D500logs_NA_0001_603.csv', \
-    4:'160323_151426_NJRCSIT148_D500logs_NA_0001_604.csv'  \
+    0:r'test-data\test-case-1\160323_151426_NJRCSIT148_D500logs_NA_0001_600.csv', \
+    1:r'test-data\test-case-1\160323_151426_NJRCSIT148_D500logs_NA_0001_601.csv', \
+    2:r'test-data\test-case-1\160323_151426_NJRCSIT148_D500logs_NA_0001_602.csv', \
+    3:r'test-data\test-case-1\160323_151426_NJRCSIT148_D500logs_NA_0001_603.csv', \
+    4:r'test-data\test-case-1\160323_151426_NJRCSIT148_D500logs_NA_0001_604.csv'  \
   }
 
 #-------------------------------------------------------------------------------
 class LpParams:
-  def __init__(self,text,ttype):
+  def __init__(self,text,ttype,ueIds):
     stxt = text.split(':')
     self.name = stxt[1]
 
@@ -22,32 +22,29 @@ class LpParams:
     self.cs    = stxt[0].upper()
     self.type  = stxt[1].upper()
     self.ttype = ttype
+    self.ueIds = ueIds
 
 #-------------------------------------------------------------------------------
 class StatsParams:
-  def __init__(self,textList):
-    self.ueIds  = ParseUeIds(textList[0])
-    self.bearer = textList[1]
-    self.qci    = textList[2]
-    self.ttype  = textList[3]
+  def __init__(self,textList,ueIds):
+    self.bearer = textList[0]
+    self.qci    = textList[1]
+    self.ttype  = textList[2]
+    self.ueIds  = ueIds
 
 #-------------------------------------------------------------------------------
 class RdaParams:
   def __init__(self,textList):
-    self.stats = StatsParams(textList)
+    self.ueIds = ParseUeIds(textList[0])
+    self.stats = StatsParams(textList[1:],self.ueIds)
     self.lpList = []
     for lpText in textList[4:]:
-      self.lpList.append(LpParams(lpText,self.stats.ttype))
+      self.lpList.append(LpParams(lpText,self.stats.ttype,self.ueIds))
 
 #-------------------------------------------------------------------------------
 class Column:
   def __init__(self,text,index):
-    self.text  = text
     self.index = index
-    self.order = None
-    # TODO: Move or make a Column for rdastats
-    self.sum   = 0
-    self.rows  = []
     first,sep,last = text.partition(' ')
     if (len(sep) > 0):
       self.service = first.upper()
@@ -58,49 +55,112 @@ class Column:
 
 #-------------------------------------------------------------------------------
 class LoadProfile:
+  summable = set(['Session Packets In','Session Packets Out'])
   def __init__(self,params):
     self.name  = params.name
     self.cs    = params.cs
     self.type  = params.type
     self.ttype = params.ttype
-    self.cols  = {}
+    self.ueIds = params.ueIds
 
-  def AddColumn(self,col):
-    if (col not in self.cols):
-      self.cols[col] = col
+    self.cols     = {}
+    self.sums     = {}
+
+  def GetTxSum(self):
+    if (self.type == 'TX') : return self.sums['Session Packets Out']
+    return 0.0
+
+  def GetRxSum(self):
+    if (self.type == 'RX') : return self.sums['Session Packets In']
+    return 0.0
+
+  #-----------------------------------------------------------------------------
+  class TimeColumn:
+    def __init__(self,col):
+      self.desc  = col.desc
+      self.index = col.index
+      self.rows  = []
+
+    def AddRow(self,val):
+      self.rows.append(val[:19])
+
+    def GetSum(self):
+      return None
+
+    def ProcessStats(self):
+      pass
+
+  class DataColumn:
+    def __init__(self,col):
+      self.desc  = col.desc
+      self.index = col.index
+      self.rows  = []
+      self.sum   = 0.0
+
+    def AddRow(self,val):
+      self.rows.append(float(val))
+
+    def GetSum(self):
+      return self.sum
+
+    def ProcessStats(self):
+      for row in self.rows:
+        self.sum += row
+
+  #-----------------------------------------------------------------------------
+  def ProcessStats(self):
+    for ueid in self.cols:
+      for colName in self.cols[ueid]:
+        self.cols[ueid][colName].ProcessStats()
+        if (colName in self.summable):
+          if (colName not in self.sums):
+            self.sums[colName] = 0.0
+          self.sums[colName] += self.cols[ueid][colName].GetSum()
+         
+  #-----------------------------------------------------------------------------
+  def UpdateUeIds(self,ueIds):
+    if ((len(self.ueIds) == 1) and ('ALL' in self.ueIds)):
+      self.ueIds = ueIds
+
+  #-----------------------------------------------------------------------------
+  def AddColumn(self,ueid,col):
+    if (ueid not in self.cols):
+      self.cols[ueid] = {}
+    if (col.desc not in self.cols[ueid]):
+      if (col.desc != 'Time'):
+        dataCol = LoadProfile.DataColumn(col)
+      else:
+        dataCol = LoadProfile.TimeColumn(col)
+      self.cols[ueid][col.desc] = dataCol
     else:
       logging.error('Adding duplicate column to LoadProfile')
 
-#  def UpdateUeList(self,ueList):
-#    if (self.ueList[0] == 'ALL'):
-#      self.ueList = ueList
-#      for i in ueList:
-#        self.ueSet.add(i)
-
 #-------------------------------------------------------------------------------
 class RdaStats:
-  lpDict      = {}  # Load Profile by load profile name
-#  lpNameList  = []  # Load Profile Name in sorted list
-  ueIds       = {}  # List of UE ids
-  ueData      = {}  # Dict of UE data by UE
+  lpDict = None     # Load Profile by load profile name
+  ueIds  = None     # UE ids
 
   def __init__(self,params):
+    self.lpDict = {}
     self.ueIds  = params.ueIds
     self.bearer = params.bearer
     self.qci    = params.qci
     self.ttype  = params.ttype
+    self.txSum  = 0.0
+    self.rxSum  = 0.0
 
   def AddLp(self,lp):
     self.lpDict[lp.name] = lp
 
-#    for lpText in textList[4:]:
-#      lp = LoadProfile(lpText,self.ttype,self.ueList)
-#      if (lp.name not in self.lpDict):
-#        self.lpDict[lp.name] = lp
-#      else:
-#        logging.error('Load Profile duplicated in RdaStats')
-#    self.lpNameList = sorted(self.lpDict)
-
+  #-----------------------------------------------------------------------------
+  def ProcessStats(self):
+    for lpName in self.lpDict:
+      self.lpDict[lpName].ProcessStats()
+      if (self.lpDict[lpName].type == 'TX'):
+        self.txSum = self.lpDict[lpName].GetTxSum()
+      if (self.lpDict[lpName].type == 'RX'):
+        self.rxSum = self.lpDict[lpName].GetRxSum()
+     
   #-----------------------------------------------------------------------------
   def UpdateUeIds(self,ueIds):
     if ((len(self.ueIds) == 1) and ('ALL' in self.ueIds)):
@@ -116,17 +176,22 @@ class RdaStats:
  
 #-------------------------------------------------------------------------------
 class RdaReport(Report):
-  statsList    = []
-  lpDict       = {}
-  lpNameList   = []
-  lpIds        = set([])
-  desiredData  = {'teraflow':('Time','In Service','Session Packets')}
+  statsList   = None
+  lpDict      = None
+  lpIds       = None
+  desiredData = {'teraflow':('Time','In Service','Session Packets')}
 
   def __init__(self,rtype):
-    self.rtype = rtype
+    self.statsList = []
+    self.lpDict    = {}
+    self.ueIds     = set([])
+    self.rtype     = rtype
 
   def AddReport(self,textList):
     params = RdaParams(textList)
+    for ueid in params.ueIds:
+      if ((ueid not in self.ueIds) and (ueid != 'ALL')):
+        self.ueIds.add(ueid)
 
     stats = RdaStats(params.stats)
     for lpParams in params.lpList:
@@ -136,40 +201,39 @@ class RdaReport(Report):
       stats.AddLp(lp)
     self.statsList.append(stats)
 
-
-
-#    stats = RdaStats(textList)
-#    self.statsList.append(stats)
-
-#    for stats in self.statsList:
-#      for lpName in stats.lpNameList:
-#        if (lpName not in self.lpDict
-
-#    lpList = stats.GetLpList()
-#    for lpName in lpList:
-#      if (lpName not in self.lpDict):
-#        self.lpDict[lpName] = self.statsList
-
   #-----------------------------------------------------------------------------
   def ProcessReport(self):
-
-    # Get a list of all UEs that results are desired for
-    #ueSet = set([])
-    #for stats in self.statsList:
-    #  ueIds = stats.GetUeIds()
-    #  for ue in ueIds:
-    #    ueSet.add(ue)
     ueList = sorted(self.ueIds)
 
     # For each UE in the UE list read the RDA file and save information
     for ueid in ueList:
-      rdaFile = RdaFile()
+      rdaFile = CsvFile()
       rdaFile.Open(rdafiles[ueid])
       self.processFile(rdaFile,ueid)
+      rdaFile.Close()
+
+    for stats in self.statsList:
+      stats.ProcessStats()
+
+    for stats in self.statsList:
+      text = '|'
+      text += stats.bearer + '|'
+      text += stats.qci + '|'
+      text += 'TX:' + str(stats.txSum).rjust(6) + '|'
+      text += 'RX:' + str(stats.rxSum).rjust(6) + '|'
+      logging.debug(text)
 
   #-----------------------------------------------------------------------------
   def processFile(self,file,ueid):
     colDict = None
+    lpDict  = {}
+
+    for lp in self.lpDict:
+      if (ueid in self.lpDict[lp].ueIds):
+        if (lp not in lpDict):
+          lpDict[lp] = self.lpDict[lp]
+        else:
+          logging.error('Attempting to add existing LoadProfile to dict')
 
     while (1):
       row = file.GetRow()
@@ -181,14 +245,13 @@ class RdaReport(Report):
         # Parse the headers to get and cols that are desired
         #
         colDict = self.parseHdr(row)
-        for lp in self.lpDict:
-          logging.debug(lp)
-          self.lpDict[lp].AddColumn(colDict['Time'])
-        #for i in colDict:
-        #  logging.debug(i)
-        #continue
+        for lp in lpDict:
+          self.lpDict[lp].AddColumn(ueid,colDict['Time'])
+          for col in colDict[lp]:
+            self.lpDict[lp].AddColumn(ueid,colDict[lp][col])
+        continue
 
-      self.parseData(row,colDict)
+      self.parseData(row,ueid,colDict,lpDict)
     
   #-----------------------------------------------------------------------------
   def parseHdr(self,row):
@@ -216,12 +279,16 @@ class RdaReport(Report):
     return colDict 
    
   #-----------------------------------------------------------------------------
-  def parseData(self,row,dict):
-    pass
+  def parseData(self,row,ueid,dict,lpDict):
+    for lp in lpDict:
+      for col in lpDict[lp].cols[ueid]:
+        lpDict[lp].cols[ueid][col].AddRow(row[lpDict[lp].cols[ueid][col].index])
    
   #-----------------------------------------------------------------------------
   def UpdateUeIds(self,ueIds):
     super().UpdateUeIds(ueIds)
+    for lp in self.lpDict:
+      self.lpDict[lp].UpdateUeIds(ueIds)
     for stats in self.statsList:
       stats.UpdateUeIds(ueIds)
 

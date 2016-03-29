@@ -6,7 +6,7 @@ from testparams import TestParams
 
 #-------------------------------------------------------------------------------
 class CmdFile:
-  dataDict = None
+#  dataDict = None
 
   #-----------------------------------------------------------------------------
   def __init__(self,test):

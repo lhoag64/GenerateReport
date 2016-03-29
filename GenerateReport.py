@@ -13,8 +13,7 @@ if (__name__ == '__main__'):
   logging.basicConfig(level=logging.DEBUG, format=' %(asctime)s-%(levelname)s-%(message)s')
   logging.debug('Start of program')
 
-  rdafile = '160323_151426_NJRCSIT148_D500logs_NA_0001_601.csv'
-  cmdfile = '160323_151349_Command_Log000.txt'
+  cmdfile = r'test-data\test-case-1\160323_151349_Command_Log000.txt'
 
   params   = None
   cmdFile  = CmdFile('Test-Case-X')

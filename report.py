@@ -12,7 +12,7 @@ def ParseUeIds(ueStr):
     return ueIds
   stxt = stxt.split(',')
   for i in stxt:
-    logging.debug(ueStr)
+    #logging.debug(ueStr)
     grp = i.split('-')
     if (len(grp) == 2):
       for j in range(int(grp[0]),int(grp[1])+1):
@@ -24,20 +24,21 @@ def ParseUeIds(ueStr):
 
 #-------------------------------------------------------------------------------
 class Report:
-  ueIds  = set([])
+  ueIds  = None
   rtype  = None
 
   #-----------------------------------------------------------------------------
   def __init__(self,rtype):
     self.rtype = rtype
+    ueIds      = set([])
 
   #-----------------------------------------------------------------------------
   def AddReport(self,textList):
-    pass
+    self.ueIds = ParseUeIds(textList[0])
 
   #-----------------------------------------------------------------------------
   def ParseUeIds(self,text):
-    self.ueList = parseUeIds(text)
+    self.ueIds = parseUeIds(text)
   
   #-----------------------------------------------------------------------------
   def UpdateUeIds(self,ueIds):

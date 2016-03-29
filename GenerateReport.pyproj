@@ -28,7 +28,7 @@
     <Compile Include="excel\worksheet.py" />
     <Compile Include="excel\__init__.py" />
     <Compile Include="GenerateReport.py" />
-    <Compile Include="rdafile.py" />
+    <Compile Include="csvfile.py" />
     <Compile Include="rdareport.py">
       <SubType>Code</SubType>
     </Compile>
